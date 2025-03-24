@@ -4,7 +4,7 @@ import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import 'mapbox-gl/dist/mapbox-gl.css';
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import centroid from "@turf/centroid";
-import { bbox, randomPoint, booleanPointInPolygon, distance } from "@turf/turf";
+import { bbox, randomPoint, booleanPointInPolygon, pointsWithinPolygon, distance } from "@turf/turf";
 
 mapboxgl.accessToken = "pk.eyJ1IjoiamF5YWNoYW5kcmEtamMiLCJhIjoiY2xmYXgwZzY0MXBqYzNzcGNycWx4eHp2biJ9.GYh5aIXFY73n0oJZD-3LYQ";
 
@@ -12,8 +12,6 @@ const MapboxPolygon = () => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const drawRef = useRef(null);
-  const [polygonName, setPolygonName] = useState("");
-  const [popup, setPopup] = useState(null);
 
   const [savedPolygons, setSavedPolygons] = useState([]);
   const [selectedPolygon, setSelectedPolygon] = useState(null);
@@ -22,9 +20,17 @@ const MapboxPolygon = () => {
   const canDrawInnerRef = useRef(false);
   const selectedPolygonRef = useRef("");
   const [metrics, setMetrics] = useState({
-    Mechanical: 400,
-    Electrical: 500,
-    Technicians: 600,
+    MasterZone: 4,
+    Building1: 28,
+    Building2: 29,
+    Offices: 10,
+    SiteGate: 9,
+    Electrical: 12,
+    Plumbing: 22,
+    Carpentry: 34,
+    Concrete: 54,
+    OrnamentalMetals: 34,
+    ConcreteFinisher: 3
   });
 
   useEffect(() => {
@@ -50,7 +56,6 @@ const MapboxPolygon = () => {
     mapRef.current.on("draw.create", (event) => {
       const polygon = event.features[0];
       if (!polygon) return;
-      console.log("Polygon Drawn:", polygon);
 
       const center = centroid(polygon).geometry.coordinates;
       const popupElement = document.createElement("div");
@@ -70,9 +75,7 @@ const MapboxPolygon = () => {
           saveButton.onclick = () => {
             const name = document.getElementById("polygon-name").value.trim();
             if (name) {
-              console.log("can draw inner and selected polygon", canDrawInnerRef.current);
               if (canDrawInnerRef.current && selectedPolygonRef.current) {
-                console.log("polygon is", polygon);
                 if (!booleanPointInPolygon(centroid(polygon).geometry, selectedPolygonRef.current)) {
                   alert("Inner polygon must be inside the outer polygon");
                   return;
@@ -82,6 +85,7 @@ const MapboxPolygon = () => {
                 savePolygon(name, polygon);
               }
               alert(`Polygon "${name}" saved!`);
+              drawRef.current.deleteAll();
               popup.remove();
             }
           };
@@ -108,33 +112,15 @@ const MapboxPolygon = () => {
     storedInnerPolygons[name] = polygon;
     localStorage.setItem("innerPolygons", JSON.stringify(storedInnerPolygons));
     setInnerPolygons(Object.entries(storedInnerPolygons));
-    loadSavedPolygons();
+    loadInnerSavedPolygons();
   };
 
-  const loadSavedPolygons = () => {
+  const loadInnerSavedPolygons = () => {
     if (!mapRef.current.isStyleLoaded()) {
       console.log("Map style is not loaded yet, waiting...");
-      mapRef.current.once("style.load", loadSavedPolygons);
+      mapRef.current.once("style.load", loadInnerSavedPolygons);
       return;
     }
-    mapRef.current.getStyle().layers.forEach((layer) => {
-      if (layer.id.startsWith("polygon-")) {
-        mapRef.current.removeLayer(layer.id);
-        mapRef.current.removeSource(layer.id);
-      }
-    });
-    
-    let storedPolygons = JSON.parse(localStorage.getItem("polygons")) || {};
-    setSavedPolygons(Object.entries(storedPolygons));
-    Object.entries(storedPolygons).forEach(([name, polygon]) => {
-      mapRef.current.addSource(`polygon-${name}`, { type: "geojson", data: polygon });
-      mapRef.current.addLayer({
-        id: `polygon-${name}`,
-        type: "fill",
-        source: `polygon-${name}`,
-        paint: { "fill-color": "#ffff00", "fill-opacity": 0.1 },
-      });
-    });
 
     let storedInnerPolygons = JSON.parse(localStorage.getItem("innerPolygons")) || {};
     setInnerPolygons(Object.entries(storedInnerPolygons));
@@ -146,74 +132,154 @@ const MapboxPolygon = () => {
         source: `innerPolygon-${name}`,
         paint: { "fill-color": "#ffff00", "fill-opacity": 0.4 },
       });
+
+      mapRef.current.addLayer({
+        id: `innerPolygon-${name}-outline`,
+        type: "line",
+        source: `innerPolygon-${name}`,
+        paint: {
+          "line-color": "#ffff00",
+          "line-width": 1,
+        },
+      });
+    });
+  }
+
+  const loadSavedPolygons = () => {
+    if (!mapRef.current.isStyleLoaded()) {
+      console.log("Map style is not loaded yet, waiting...");
+      mapRef.current.once("style.load", loadSavedPolygons);
+      return;
+    }
+
+    let storedPolygons = JSON.parse(localStorage.getItem("polygons")) || {};
+    setSavedPolygons(Object.entries(storedPolygons));
+    Object.entries(storedPolygons).forEach(([name, polygon]) => {
+      mapRef.current.addSource(`polygon-${name}`, { type: "geojson", data: polygon });
+      mapRef.current.addLayer({
+        id: `polygon-${name}`,
+        type: "fill",
+        source: `polygon-${name}`,
+        paint: { "fill-color": "#ffff00", "fill-opacity": 0.1 },
+      });
+
+      mapRef.current.addLayer({
+        id: `polygon-${name}-outline`,
+        type: "line",
+        source: `polygon-${name}`,
+        paint: {
+          "line-color": "#ffff00",
+          "line-width": 1,
+        },
+      });
     });
   };
 
   const canDrawFunctionality = () => {
-    console.log("heyyyyy");
     canDrawInnerRef.current = true;
   }
 
-  const plotMetrics = () => {
-    let placedCircles = [];
-    Object.entries(metrics).forEach(([name, value], index) => {
-      const innerPolygon = innerPolygons[0][1]?.geometry;
-      if (!innerPolygon) return;
 
-      const center = centroid(innerPolygon).geometry.coordinates;
-      let baseRadius = value / 100;
-      console.log("base radius is", baseRadius);
-      const color = ["#ff5733", "#33ff57", "#3357ff"][index % 3];
+  const getValidPointsInsidePolygon = (polygon, count, radiusValues) => {
+    let bboxArea = bbox(polygon[1]);
+    let validPoints = [];
+    let attempts = 0;
 
-      let validPosition = false;
-      let adjustedCenter = [...center];
-      let attempts = 0;
-      while (!validPosition && attempts < 100) {
-        if (booleanPointInPolygon(adjustedCenter, innerPolygon)) {
-          validPosition = true;
-        } else {
-          console.log("is this coming here");
-          adjustedCenter[0] += 0.0001; // Small shift
-          adjustedCenter[1] += 0.0001;
-        }
-        attempts++;
+    let shrinkFactor = 0.7;
+    let center = centroid(polygon[1]).geometry.coordinates; 
+    let adjustedBbox = [
+      center[0] - (bboxArea[2] - bboxArea[0]) * shrinkFactor / 2,
+      center[1] - (bboxArea[3] - bboxArea[1]) * shrinkFactor / 2,
+      center[0] + (bboxArea[2] - bboxArea[0]) * shrinkFactor / 2,
+      center[1] + (bboxArea[3] - bboxArea[1]) * shrinkFactor / 2
+    ];
+
+    while (validPoints.length < count) {
+      let randomPoints = randomPoint(5, { bbox: adjustedBbox }).features;
+      let chosenPoint = randomPoints.find(p => booleanPointInPolygon(p, polygon[1], { ignoreBoundary: true }));
+
+      if (chosenPoint) {
+        let index = validPoints.length;
+        let minRequiredDistance = 0.005;
+        let tooClose = validPoints.some((pt, i) =>
+          distance(pt, chosenPoint) < minRequiredDistance
+        );
+        if (!tooClose) validPoints.push(chosenPoint.geometry.coordinates);
       }
+      attempts++;
+    }
+    return validPoints;
+  };
 
-      placedCircles.push({ center: adjustedCenter, radius: baseRadius });
-      console.log("placed circles are", placedCircles);
-      mapRef.current.addLayer({
-        id: `metric-${name}`,
-        type: "circle",
-        source: {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            geometry: { type: "Point", coordinates: adjustedCenter },
-          },
-        },
-        paint: {
-          "circle-radius": ["interpolate",  ['exponential', 2], ["zoom"], 10, 5, 15, 12, 17, 20, 19, 30],
-          "circle-color": color,
-          "circle-opacity": 0.7,
-        },
-      });
 
-      mapRef.current.addLayer({
-        id: `metric-text-${name}`,
-        type: "symbol",
-        source: {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            geometry: { type: "Point", coordinates: adjustedCenter },
-            properties: { label: value.toString() },
+
+  const calculateRadiusRange = (metricValues) => {
+    const minRadius = 3;
+    const maxRadius = 10;
+    const minMetric = Math.min(...metricValues);
+    const maxMetric = Math.max(...metricValues);
+
+    return metricValues.map(value => {
+      if (maxMetric === minMetric) return minRadius;
+      return minRadius + ((value - minMetric) / (maxMetric - minMetric)) * (maxRadius - minRadius);
+    });
+  };
+
+  const plotMetrics = () => {
+    const metricValues = Object.values(metrics);
+    const radiusValues = calculateRadiusRange(metricValues);
+    innerPolygons.forEach((polygon, index) => {
+      let minDistance = 0.001;
+      let points = getValidPointsInsidePolygon(polygon, Object.keys(metrics).length, minDistance);
+
+      Object.entries(metrics).forEach(([name, value], metricIndex) => {
+        if (!points[metricIndex]) return;
+        let baseRadius = radiusValues[metricIndex];
+        const color = ["#ff5733", "#33ff57", "#3357ff"][metricIndex % 3];
+
+        mapRef.current.addLayer({
+          id: `metric-${name}-${index}`,
+          type: "circle",
+          source: {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: points[metricIndex] },
+            },
           },
-        },
-        layout: {
-          "text-field": ["step", ["zoom"], "", 19, ["get", "label"]],
-          "text-size": 14,
-          "text-anchor": "center",
-        },
+          paint: {
+            "circle-radius": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              10, baseRadius - 2,
+              17, baseRadius - 3,
+              18, baseRadius,
+              21, baseRadius * 5,
+              23, baseRadius * 7
+            ],
+            "circle-color": color,
+            "circle-opacity": 0.7,
+          },
+        });
+
+        mapRef.current.addLayer({
+          id: `metric-text-${name}-${index}`,
+          type: "symbol",
+          source: {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: points[metricIndex] },
+              properties: { label: value.toString() },
+            },
+          },
+          layout: {
+            "text-field": ["step", ["zoom"], "", 19, ["get", "label"]],
+            "text-size": 14,
+            "text-anchor": "center",
+          },
+        });
       });
     });
   };
